@@ -11,8 +11,11 @@ class ScheduleCreateRequest(BaseModel):
     @field_validator("interval_minutes")
     @classmethod
     def validate_interval(cls, v):
-        if v < 1:
-            raise ValueError("El intervalo mínimo es 1 minuto.")
+        if v < 30:
+            raise ValueError(
+                "El intervalo mínimo es 30 minutos. "
+                "Intervalos cortos agotan la cuota de Gemini (20 req/día en tier gratuito)."
+            )
         if v > 10080:
             raise ValueError("El intervalo máximo es 10080 minutos (1 semana).")
         return v

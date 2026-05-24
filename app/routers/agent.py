@@ -36,6 +36,9 @@ def agent_trigger(body: RunFullCycleRequest):
     """
     Audita UNA sola URL en background y devuelve 202 inmediatamente.
     Polling: GET /agent/trigger/status
+
+    Skip-if-recent: si ya hay análisis completado en los últimos 30 min
+    para esa URL, omite el ciclo para no agotar la cuota de Gemini.
     """
     global _cycle_status
 
@@ -43,6 +46,33 @@ def agent_trigger(body: RunFullCycleRequest):
         return {"status": "running", "message": "Ya hay un ciclo en ejecución."}
 
     url = str(body.url)
+
+    # ── Skip-if-recent ───────────────────────────────────────────────────────
+    from datetime import datetime, timedelta
+    from app.models.analysis import Analysis
+    from app.enums import AnalysisStatus
+
+    _skip_db = SessionLocal()
+    try:
+        threshold = datetime.now() - timedelta(minutes=30)
+        recent = (
+            _skip_db.query(Analysis)
+            .filter(
+                Analysis.url == url,
+                Analysis.status == AnalysisStatus.COMPLETED.value,
+                Analysis.created_at >= threshold,
+            )
+            .first()
+        )
+        if recent:
+            age_min = int((datetime.now() - recent.created_at).total_seconds() / 60)
+            logger.info("[Trigger] Skip — análisis reciente id=%s (%s min) para %s", recent.id, age_min, url)
+            return {
+                "status": "skipped",
+                "message": f"Análisis reciente encontrado (hace {age_min} min). Espera 30 min o usa /agent/run-full-cycle para forzar.",
+            }
+    finally:
+        _skip_db.close()
 
     def _run():
         global _cycle_status

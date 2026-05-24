@@ -10,3 +10,4 @@ beautifulsoup4==4.12.3
 lxml==5.4.0
 markdown==3.10.2
 apscheduler==3.10.4
+psycopg2-binary==2.9.10

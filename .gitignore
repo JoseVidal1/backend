@@ -1,0 +1,30 @@
+# Variables de entorno — NUNCA subir al repo
+.env
+
+# Base de datos SQLite generada localmente
+*.db
+*.db-shm
+*.db-wal
+
+# Entorno virtual Python
+venv/
+.venv/
+env/
+
+# Caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# Logs
+*.log
+
+# Sistema operativo
+.DS_Store
+Thumbs.db

@@ -1,10 +1,11 @@
 import logging
+import threading
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.agents.orchestrator import run_full_cycle, run_site_cycle
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.schemas.agent import (
     RunFullCycleRequest,
     RunFullCycleResponse,
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["Agente"])
 
+# Estado global del ciclo async
+_cycle_status: dict = {"running": False, "last_result": None, "last_error": None}
+
 
 @router.post("/run-full-cycle", response_model=RunFullCycleResponse)
 def agent_run_full_cycle(body: RunFullCycleRequest, db: Session = Depends(get_db)):
@@ -25,6 +29,59 @@ def agent_run_full_cycle(body: RunFullCycleRequest, db: Session = Depends(get_db
     """
     logger.info("POST /agent/run-full-cycle url=%s", body.url)
     return run_full_cycle(str(body.url), db)
+
+
+@router.post("/trigger", status_code=202)
+def agent_trigger(body: RunSiteCycleRequest | None = None):
+    """
+    Dispara el ciclo completo en background y devuelve 202 inmediatamente.
+    El frontend hace polling a GET /agent/trigger/status para saber cuándo terminó.
+    """
+    global _cycle_status
+
+    if _cycle_status["running"]:
+        return {"status": "running", "message": "Ya hay un ciclo en ejecución."}
+
+    payload = body or RunSiteCycleRequest()
+    wp_url = str(payload.wordpress_url) if payload.wordpress_url else None
+
+    def _run():
+        global _cycle_status
+        _cycle_status["running"] = True
+        _cycle_status["last_error"] = None
+        db = SessionLocal()
+        try:
+            result = run_site_cycle(
+                db,
+                wordpress_url=wp_url,
+                include_posts=payload.include_posts,
+                status=payload.status,
+                skip_existing=payload.skip_existing,
+            )
+            _cycle_status["last_result"] = {
+                "analyzed": result["analyzed"],
+                "total_proposals_created": result["total_proposals_created"],
+            }
+            logger.info("[Trigger] Ciclo completado: %s propuestas", result["total_proposals_created"])
+        except Exception as exc:
+            _cycle_status["last_error"] = str(exc)
+            logger.error("[Trigger] Ciclo falló: %s", exc)
+        finally:
+            _cycle_status["running"] = False
+            db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "started", "message": "Ciclo iniciado en segundo plano. Haz polling a /agent/trigger/status"}
+
+
+@router.get("/trigger/status")
+def agent_trigger_status():
+    """Devuelve el estado actual del ciclo async."""
+    return {
+        "running": _cycle_status["running"],
+        "last_result": _cycle_status["last_result"],
+        "last_error": _cycle_status["last_error"],
+    }
 
 
 @router.post("/run-site-cycle", response_model=RunSiteCycleResponse)

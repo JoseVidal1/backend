@@ -9,9 +9,11 @@ from app.config import settings
 # connect_args={"check_same_thread": False} es requerido solo para SQLite
 # porque por defecto SQLite no permite que un mismo objeto de conexión
 # se use desde múltiples threads, pero FastAPI puede hacer eso.
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False} if _is_sqlite else {},
 )
 
 # sessionmaker: fábrica que genera sesiones de DB.
@@ -27,7 +29,11 @@ class Base(DeclarativeBase):
 
 
 def run_sqlite_migrations() -> None:
-    """Agrega/renombra columnas en SQLite sin perder datos (hackathon-friendly)."""
+    """Agrega/renombra columnas en SQLite sin perder datos (hackathon-friendly).
+    No hace nada si la DB es PostgreSQL."""
+    if not _is_sqlite:
+        return
+
     from sqlalchemy import inspect, text
 
     logger = logging.getLogger(__name__)

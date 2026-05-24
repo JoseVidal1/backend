@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: geo_copilot
+      POSTGRES_USER: geo_user
+      POSTGRES_PASSWORD: geo_pass123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo_user -d geo_copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://geo_user:geo_pass123@db:5432/geo_copilot
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CORS_ORIGINS: http://localhost:3000,https://geo-copilot-frontend.vercel.app
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

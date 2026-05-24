@@ -68,7 +68,7 @@ app.add_middleware(
 )
 
 # --- Routers ---
-from app.routers import agent, analyze, gsc, probe, proposals, schedule
+from app.routers import admin, agent, analyze, gsc, probe, proposals, schedule
 
 app.include_router(analyze.router)
 app.include_router(probe.router)
@@ -76,6 +76,7 @@ app.include_router(gsc.router)
 app.include_router(agent.router)
 app.include_router(proposals.router)
 app.include_router(schedule.router)
+app.include_router(admin.router)
 
 
 @app.get("/health", tags=["Sistema"])

@@ -9,6 +9,24 @@ SERFINANZA_REFERENCE = (
 
 SFC_DISCLAIMER = "Sujeto a estudio de crédito y políticas vigentes."
 
+PARTIAL_FIX_RULE = """
+Regla de edición quirúrgica:
+- SOLO modifica o genera la parte deficiente indicada.
+- NO reescribas ni dupliques contenido que ya funciona bien en la página.
+- Conserva el tono Serfinanza y no inventes productos que no existen.
+"""
+
+
+def rejection_learnings_block(reasons: list[str]) -> str:
+    """Contexto de rechazos previos para que Gemini evite repetir errores."""
+    if not reasons:
+        return ""
+    items = "\n".join(f"- {r}" for r in reasons[:15])
+    return f"""
+Aprendizajes de rechazos anteriores (NO repetir estos errores):
+{items}
+"""
+
 
 def system_prompt() -> str:
     return f"""Eres un experto en GEO (Generative Engine Optimization) y SEO financiero para Colombia.
@@ -59,11 +77,16 @@ def prompt_blog_post(
     h2_list: list[str],
     body_excerpt: str,
     topic_query: str | None = None,
+    learnings: list[str] | None = None,
 ) -> str:
     topic = topic_query or "productos financieros de Serfinanza"
+    learning_block = rejection_learnings_block(learnings or [])
     return f"""{system_prompt()}
-
-Genera un artículo de blog de ~1200 palabras optimizado para GEO sobre: {topic}
+{PARTIAL_FIX_RULE}
+{learning_block}
+Genera SOLO el contenido nuevo faltante: un artículo de blog de ~800-1200 palabras
+optimizado para GEO sobre: {topic}
+No repitas secciones que ya existen en la página analizada.
 Incluye H1, al menos 4 H2, sección FAQ con 5 preguntas, conclusión y el disclaimer SFC.
 Formato: Markdown puro. NO uses bloques de código con ``` ni ```markdown.
 
@@ -76,10 +99,14 @@ def prompt_meta_description(
     h1: str,
     h2_list: list[str],
     body_excerpt: str,
+    learnings: list[str] | None = None,
 ) -> str:
+    learning_block = rejection_learnings_block(learnings or [])
     return f"""{system_prompt()}
-
+{PARTIAL_FIX_RULE}
+{learning_block}
 Genera UNA meta description optimizada para SEO/GEO.
+SOLO la meta description — no modifiques título, H1 ni body.
 Máximo 160 caracteres. Sin comillas. En español colombiano.
 
 {_content_block(title, meta, h1, h2_list, body_excerpt)}
@@ -93,11 +120,16 @@ def prompt_faq_schema(
     h1: str,
     h2_list: list[str],
     body_excerpt: str,
+    learnings: list[str] | None = None,
 ) -> str:
+    learning_block = rejection_learnings_block(learnings or [])
     return f"""{system_prompt()}
-
-Genera 10 pares pregunta-respuesta para FAQ schema.org (FAQPage).
-Respuestas concisas (2-4 oraciones). Incluye disclaimer SFC en al menos 2 respuestas.
+{PARTIAL_FIX_RULE}
+{learning_block}
+Genera SOLO las preguntas frecuentes faltantes (FAQ schema.org FAQPage).
+No repitas FAQs que ya puedan existir en el contenido actual.
+10 pares pregunta-respuesta. Respuestas concisas (2-4 oraciones).
+Incluye disclaimer SFC en al menos 2 respuestas.
 
 {_content_block(title, meta, h1, h2_list, body_excerpt)}
 
@@ -114,10 +146,14 @@ def prompt_alt_text_fix(
     h2_list: list[str],
     body_excerpt: str,
     images_without_alt: int,
+    learnings: list[str] | None = None,
 ) -> str:
+    learning_block = rejection_learnings_block(learnings or [])
     return f"""{system_prompt()}
-
+{PARTIAL_FIX_RULE}
+{learning_block}
 La página tiene {images_without_alt} imágenes sin texto alternativo (alt).
+Genera SOLO los textos alt faltantes — no modifiques otro contenido.
 Propón textos alt descriptivos para imágenes típicas de una página bancaria como esta.
 Optimiza para accesibilidad y SEO.
 
@@ -135,11 +171,14 @@ def prompt_schema_markup(
     h1: str,
     h2_list: list[str],
     body_excerpt: str,
+    learnings: list[str] | None = None,
 ) -> str:
+    learning_block = rejection_learnings_block(learnings or [])
     return f"""{system_prompt()}
-
-Genera un bloque JSON-LD (schema.org) apropiado para esta página financiera.
-Puede ser WebPage, FinancialProduct o Organization según el contenido.
+{PARTIAL_FIX_RULE}
+{learning_block}
+Genera SOLO el bloque JSON-LD (schema.org) faltante para esta página.
+No dupliques schema que ya exista. Puede ser WebPage, FinancialProduct u Organization.
 
 {_content_block(title, meta, h1, h2_list, body_excerpt)}
 
@@ -154,14 +193,17 @@ def prompt_geo_insight(
     body_excerpt: str,
     seo_score: int | None = None,
     geo_score: int | None = None,
+    learnings: list[str] | None = None,
 ) -> str:
     scores = ""
     if seo_score is not None and geo_score is not None:
         scores = f"\nScores actuales: SEO {seo_score}/100, GEO {geo_score}/100."
+    learning_block = rejection_learnings_block(learnings or [])
     return f"""{system_prompt()}
-
-Explica por qué un LLM (ChatGPT, Gemini, Perplexity) probablemente NO citaría esta página
-y cómo mejorarla para GEO en Colombia.{scores}
+{PARTIAL_FIX_RULE}
+{learning_block}
+Explica SOLO qué partes deficientes impiden que un LLM cite esta página
+y cómo mejorarlas quirúrgicamente para GEO en Colombia.{scores}
 
 {_content_block(title, meta, h1, h2_list, body_excerpt)}
 

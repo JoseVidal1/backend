@@ -12,6 +12,7 @@ from app.models.llm_probe import LLMProbeResult
 from app.models.proposal import Proposal
 from app.models.scrape_result import ScrapeResult
 from app.prompts import templates
+from app.services.feedback_learning import get_rejection_learnings
 from app.services.gemini_client import GeminiClient, get_gemini_client
 
 logger = logging.getLogger(__name__)
@@ -155,49 +156,51 @@ def _generate_content(
     client: GeminiClient,
     seo_score: int | None,
     geo_score: int | None,
+    learnings: list[str] | None = None,
 ) -> str:
     title = scrape.title or ""
     meta = scrape.meta_description or ""
     h1 = scrape.h1 or ""
     h2_list = _parse_h2_list(scrape)
     body = scrape.body_text or ""
+    learnings = learnings or []
 
     if plan.proposal_type == ProposalType.META_DESCRIPTION:
         return client.generate(
-            templates.prompt_meta_description(title, meta, h1, h2_list, body)
+            templates.prompt_meta_description(title, meta, h1, h2_list, body, learnings)
         )
 
     if plan.proposal_type == ProposalType.FAQ_SCHEMA:
         data = client.generate_json(
-            templates.prompt_faq_schema(title, meta, h1, h2_list, body)
+            templates.prompt_faq_schema(title, meta, h1, h2_list, body, learnings)
         )
         return json.dumps(data, ensure_ascii=False, indent=2)
 
     if plan.proposal_type == ProposalType.ALT_TEXT_FIX:
         data = client.generate_json(
             templates.prompt_alt_text_fix(
-                title, meta, h1, h2_list, body, scrape.images_without_alt
+                title, meta, h1, h2_list, body, scrape.images_without_alt, learnings
             )
         )
         return json.dumps(data, ensure_ascii=False, indent=2)
 
     if plan.proposal_type == ProposalType.SCHEMA_MARKUP:
         data = client.generate_json(
-            templates.prompt_schema_markup(title, meta, h1, h2_list, body)
+            templates.prompt_schema_markup(title, meta, h1, h2_list, body, learnings)
         )
         return json.dumps(data, ensure_ascii=False, indent=2)
 
     if plan.proposal_type == ProposalType.BLOG_POST:
         return client.generate(
             templates.prompt_blog_post(
-                title, meta, h1, h2_list, body, topic_query=plan.trigger_query
+                title, meta, h1, h2_list, body, topic_query=plan.trigger_query, learnings=learnings
             )
         )
 
     if plan.proposal_type == ProposalType.GEO_INSIGHT:
         data = client.generate_json(
             templates.prompt_geo_insight(
-                title, meta, h1, h2_list, body, seo_score=seo_score, geo_score=geo_score
+                title, meta, h1, h2_list, body, seo_score=seo_score, geo_score=geo_score, learnings=learnings
             )
         )
         return json.dumps(data, ensure_ascii=False, indent=2)
@@ -254,17 +257,21 @@ def generate_proposals(
         return []
 
     gemini = client or get_gemini_client()
+    learnings = get_rejection_learnings(db)
     created: list[Proposal] = []
+    quota_exhausted = False
 
     for plan in plans:
         try:
             content = _finalize_content(
                 _generate_content(
-                    plan, scrape, gemini, analysis.seo_score, analysis.geo_score
+                    plan, scrape, gemini, analysis.seo_score, analysis.geo_score, learnings
                 ),
                 plan.proposal_type,
             )
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code == 429:
+                quota_exhausted = True
             logger.warning("Gemini falló para propuesta %s; se omite.", plan.proposal_type)
             continue
 
@@ -287,4 +294,137 @@ def generate_proposals(
         db.refresh(proposal)
 
     logger.info("Generadas %s propuestas para analysis_id=%s", len(created), analysis_id)
+
+    if not created and quota_exhausted:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Cuota de Gemini agotada (free tier: ~20 solicitudes/día). "
+                "Espera al reset diario o usa otra API key en GEMINI_API_KEY."
+            ),
+        )
+
     return created
+
+
+def generate_proposals_for_all(
+    db: Session,
+    analysis_ids: list[int] | None = None,
+    skip_existing: bool = True,
+    client: GeminiClient | None = None,
+) -> dict:
+    """
+    Genera propuestas para todos los análisis completed (o una lista dada).
+    Omite análisis que ya tienen propuestas si skip_existing=True.
+    """
+    query = db.query(Analysis).filter(Analysis.status == AnalysisStatus.COMPLETED.value)
+    if analysis_ids:
+        query = query.filter(Analysis.id.in_(analysis_ids))
+
+    analyses = query.order_by(Analysis.created_at.asc()).all()
+    if not analyses:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay análisis completados para generar propuestas.",
+        )
+
+    results: list[dict] = []
+    processed = 0
+    skipped = 0
+    failed = 0
+    quota_exhausted = False
+    total_proposals_created = 0
+
+    for analysis in analyses:
+        if skip_existing:
+            has_proposals = (
+                db.query(Proposal)
+                .filter(Proposal.analysis_id == analysis.id)
+                .count()
+                > 0
+            )
+            if has_proposals:
+                skipped += 1
+                results.append(
+                    {
+                        "analysis_id": analysis.id,
+                        "url": analysis.url,
+                        "proposals_created": 0,
+                        "proposals": [],
+                        "skipped": True,
+                        "error": None,
+                    }
+                )
+                continue
+
+        try:
+            proposals = generate_proposals(analysis.id, db, client=client)
+            processed += 1
+            total_proposals_created += len(proposals)
+            results.append(
+                {
+                    "analysis_id": analysis.id,
+                    "url": analysis.url,
+                    "proposals_created": len(proposals),
+                    "proposals": proposals,
+                    "skipped": False,
+                    "error": None,
+                }
+            )
+        except HTTPException as exc:
+            failed += 1
+            if exc.status_code == 429:
+                quota_exhausted = True
+            results.append(
+                {
+                    "analysis_id": analysis.id,
+                    "url": analysis.url,
+                    "proposals_created": 0,
+                    "proposals": [],
+                    "skipped": False,
+                    "error": str(exc.detail),
+                }
+            )
+        except Exception as exc:
+            failed += 1
+            logger.exception("recommend-all falló analysis_id=%s: %s", analysis.id, exc)
+            results.append(
+                {
+                    "analysis_id": analysis.id,
+                    "url": analysis.url,
+                    "proposals_created": 0,
+                    "proposals": [],
+                    "skipped": False,
+                    "error": "Error inesperado al generar propuestas.",
+                }
+            )
+
+    logger.info(
+        "recommend-all: %s análisis, %s procesados, %s omitidos, %s fallidos, %s propuestas",
+        len(analyses),
+        processed,
+        skipped,
+        failed,
+        total_proposals_created,
+    )
+
+    if processed > 0 and total_proposals_created == 0 and quota_exhausted:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Cuota de Gemini agotada. Ninguna propuesta pudo generarse. "
+                "Espera al reset diario o cambia GEMINI_API_KEY en .env y reinicia uvicorn."
+            ),
+        )
+
+    if processed == 0 and skipped > 0 and skip_existing:
+        logger.info("recommend-all: todos los análisis ya tenían propuestas (skip_existing=true)")
+
+    return {
+        "total_analyses": len(analyses),
+        "processed": processed,
+        "skipped": skipped,
+        "failed": failed,
+        "total_proposals_created": total_proposals_created,
+        "results": results,
+    }

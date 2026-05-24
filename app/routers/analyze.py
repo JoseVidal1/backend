@@ -12,11 +12,15 @@ from app.schemas.analysis import (
     AnalysisSummary,
     AnalyzeRequest,
     AnalyzeResponse,
+    AnalyzeWordPressPagesRequest,
+    AnalyzeWordPressPagesResponse,
+    BulkAnalyzeItem,
     ScrapeSummary,
 )
 from app.schemas.probe import ProbeResultItem
 from app.schemas.proposal import ProposalSummary
 from app.database import get_db
+from app.services.wordpress_pages import fetch_wordpress_pages
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,92 @@ def analyze_url(body: AnalyzeRequest, db: Session = Depends(get_db)):
     )
 
 
+@router.post("/analyze/wordpress-pages", response_model=AnalyzeWordPressPagesResponse)
+def analyze_wordpress_pages(
+    body: AnalyzeWordPressPagesRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Obtiene todas las páginas desde la REST API de WordPress
+    (/wp-json/wp/v2/pages) y ejecuta la misma auditoría que POST /analyze
+    para cada una (scrape + SEO/GEO score).
+    """
+    payload = body or AnalyzeWordPressPagesRequest()
+    wp_base = str(payload.wordpress_url) if payload.wordpress_url else None
+
+    pages = fetch_wordpress_pages(
+        wordpress_url=wp_base,
+        status=payload.status,
+        include_posts=payload.include_posts,
+    )
+
+    if not pages:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontraron páginas en WordPress para analizar.",
+        )
+
+    source = wp_base or "WORDPRESS_URL (.env)"
+    logger.info("Auditoría masiva WP: %s URLs desde %s", len(pages), source)
+
+    results: list[BulkAnalyzeItem] = []
+    analyzed = 0
+    failed = 0
+
+    for item in pages:
+        try:
+            analysis = run_audit(item.url, db)
+            db.refresh(analysis, attribute_names=["scrape_result"])
+            warning = _analysis_scrape_warning(analysis)
+            results.append(
+                BulkAnalyzeItem(
+                    analysis_id=analysis.id,
+                    url=item.url,
+                    wp_id=item.wp_id,
+                    wp_title=item.title,
+                    content_type=item.content_type,
+                    seo_score=analysis.seo_score,
+                    geo_score=analysis.geo_score,
+                    status=AnalysisStatus(analysis.status),
+                    scrape_warning=warning,
+                )
+            )
+            analyzed += 1
+        except HTTPException as exc:
+            failed += 1
+            results.append(
+                BulkAnalyzeItem(
+                    url=item.url,
+                    wp_id=item.wp_id,
+                    wp_title=item.title,
+                    content_type=item.content_type,
+                    status=AnalysisStatus.FAILED,
+                    error=str(exc.detail),
+                )
+            )
+        except Exception as exc:
+            failed += 1
+            logger.exception("Fallo audit %s: %s", item.url, exc)
+            results.append(
+                BulkAnalyzeItem(
+                    url=item.url,
+                    wp_id=item.wp_id,
+                    wp_title=item.title,
+                    content_type=item.content_type,
+                    status=AnalysisStatus.FAILED,
+                    error="Error inesperado durante la auditoría.",
+                )
+            )
+
+    return AnalyzeWordPressPagesResponse(
+        source=source,
+        total_found=len(pages),
+        analyzed=analyzed,
+        failed=failed,
+        results=results,
+    )
+
+
 @router.get("/analyses", response_model=AnalysisListResponse)
 def list_analyses(
     status: AnalysisStatus | None = None,
@@ -81,7 +171,16 @@ def list_analyses(
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
-    """Lista análisis previos con paginación."""
+    """
+    Lista análisis previos con paginación.
+
+    **status** es el estado de la auditoría (scrape), no de propuestas:
+    - `completed` → auditorías terminadas (lo habitual)
+    - `failed` → scrape falló
+    - `pending` → en curso (casi siempre vacío; dura milisegundos)
+
+    Sin filtro devuelve todos los análisis.
+    """
     if limit < 1 or limit > 100:
         raise HTTPException(status_code=400, detail="limit debe estar entre 1 y 100.")
     if offset < 0:

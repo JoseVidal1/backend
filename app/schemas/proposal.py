@@ -71,6 +71,37 @@ class RecommendResponse(BaseModel):
     proposals: list[ProposalSummary]
 
 
+class RecommendAllRequest(BaseModel):
+    """Genera propuestas para múltiples análisis en una sola llamada."""
+
+    analysis_ids: Optional[list[int]] = Field(
+        default=None,
+        description="IDs específicos. Si no se envían, procesa todos los análisis completed.",
+    )
+    skip_existing: bool = Field(
+        default=True,
+        description="Si true, omite análisis que ya tienen propuestas generadas.",
+    )
+
+
+class RecommendAllResultItem(BaseModel):
+    analysis_id: int
+    url: str
+    proposals_created: int
+    proposals: list[ProposalSummary] = Field(default_factory=list)
+    skipped: bool = False
+    error: Optional[str] = None
+
+
+class RecommendAllResponse(BaseModel):
+    total_analyses: int
+    processed: int
+    skipped: int
+    failed: int
+    total_proposals_created: int
+    results: list[RecommendAllResultItem]
+
+
 class ProposalListFilters(BaseModel):
     """Query params para GET /proposals."""
 
@@ -111,6 +142,34 @@ class MeasureImpactResponse(BaseModel):
     proposal_id: int
     measurement: ImpactMeasurementSchema
     improvement_summary: str
+
+
+class ProposalPreviewResponse(BaseModel):
+    """Previsualización para el editor antes de aprobar o rechazar."""
+
+    id: int
+    analysis_id: Optional[int] = None
+    analysis_url: Optional[str] = None
+    proposal_type: ProposalType
+    title: str
+    summary: Optional[str] = None
+    severity: Severity
+    status: ProposalStatus
+    trigger_source: TriggerSource
+    trigger_query: Optional[str] = None
+    content_raw: str
+    content_html: str
+    publish_action: str = Field(
+        description="create_post | patch_meta | append_to_post | update_alt"
+    )
+    publish_action_label: str
+    target_post_id: Optional[int] = None
+    target_media_id: Optional[int] = None
+    wordpress_url: Optional[str] = None
+    can_review: bool = Field(description="True si status=pending y se puede aprobar/rechazar")
+    pending_count: int = Field(description="Total de propuestas pendientes en cola")
+    approve_url: str = Field(description="Ruta relativa para aprobar: POST /proposals/{id}/approve")
+    reject_url: str = Field(description="Ruta relativa para rechazar: POST /proposals/{id}/reject")
 
 
 ProposalListResponse = PaginatedResponse[ProposalSummary]

@@ -95,6 +95,47 @@ class AnalyzeResponse(BaseModel):
     scrape_warning: Optional[str] = None
 
 
+class AnalyzeWordPressPagesRequest(BaseModel):
+    """Audita todas las páginas del sitio WordPress vía REST API."""
+
+    wordpress_url: Optional[HttpUrl] = Field(
+        default=None,
+        description=(
+            "URL base del sitio WordPress (ej: https://tu-sitio.railway.app). "
+            "También acepta el endpoint REST completo (/wp-json/wp/v2/pages)."
+        ),
+    )
+    include_posts: bool = Field(
+        default=False,
+        description="Si true, también analiza entradas (posts) además de páginas.",
+    )
+    status: str = Field(
+        default="publish",
+        description="Estado WP a incluir: publish, draft, etc.",
+    )
+
+
+class BulkAnalyzeItem(BaseModel):
+    analysis_id: Optional[int] = None
+    url: str
+    wp_id: int
+    wp_title: str
+    content_type: str
+    seo_score: Optional[int] = None
+    geo_score: Optional[int] = None
+    status: AnalysisStatus
+    scrape_warning: Optional[str] = None
+    error: Optional[str] = None
+
+
+class AnalyzeWordPressPagesResponse(BaseModel):
+    source: str
+    total_found: int
+    analyzed: int
+    failed: int
+    results: list[BulkAnalyzeItem]
+
+
 class AnalysisSummary(BaseModel):
     id: int
     url: str

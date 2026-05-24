@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.enums import ProposalStatus, ProposalType
+from app.enums import ProposalStatus, ProposalType, Severity, TriggerSource
 from app.models.proposal import Proposal, ProposalFeedback
 from app.schemas.proposal import (
     ProposalApproveResponse,
     ProposalDetail,
     ProposalListResponse,
+    ProposalPreviewResponse,
     ProposalRejectResponse,
     ProposalSummary,
     RejectRequest,
@@ -18,11 +19,96 @@ from app.schemas.proposal import (
 )
 from app.services.impact_mock import measure_proposal_impact
 from app.services.content_utils import clean_gemini_output
+from app.services.proposal_preview import build_proposal_preview
 from app.services.wordpress_adapter import publish_proposal
+from app.models.analysis import Analysis
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/proposals", tags=["Editar"])
+
+
+def _pending_count(db: Session) -> int:
+    return (
+        db.query(Proposal)
+        .filter(Proposal.status == ProposalStatus.PENDING.value)
+        .count()
+    )
+
+
+def _proposal_to_preview(proposal: Proposal, db: Session) -> ProposalPreviewResponse:
+    preview = build_proposal_preview(
+        proposal_type=proposal.proposal_type,
+        title=proposal.title,
+        content=proposal.content,
+    )
+    analysis_url = None
+    if proposal.analysis_id:
+        analysis = db.get(Analysis, proposal.analysis_id)
+        analysis_url = analysis.url if analysis else None
+
+    pending = _pending_count(db)
+    pid = proposal.id
+
+    return ProposalPreviewResponse(
+        id=pid,
+        analysis_id=proposal.analysis_id,
+        analysis_url=analysis_url,
+        proposal_type=ProposalType(proposal.proposal_type),
+        title=proposal.title,
+        summary=proposal.summary,
+        severity=Severity(proposal.severity),
+        status=ProposalStatus(proposal.status),
+        trigger_source=TriggerSource(proposal.trigger_source),
+        trigger_query=proposal.trigger_query,
+        content_raw=preview["content_raw"],
+        content_html=preview["content_html"],
+        publish_action=preview["publish_action"],
+        publish_action_label=preview["publish_action_label"],
+        target_post_id=preview["target_post_id"],
+        target_media_id=preview["target_media_id"],
+        wordpress_url=preview["wordpress_url"],
+        can_review=proposal.status == ProposalStatus.PENDING.value,
+        pending_count=pending,
+        approve_url=f"/proposals/{pid}/approve",
+        reject_url=f"/proposals/{pid}/reject",
+    )
+
+
+@router.get("/review/next", response_model=ProposalPreviewResponse)
+def get_next_proposal_for_review(db: Session = Depends(get_db)):
+    """
+    Devuelve la siguiente propuesta pendiente para previsualizar en el editor.
+    Orden FIFO (la más antigua primero). Responde 404 si no hay pendientes.
+    """
+    proposal = (
+        db.query(Proposal)
+        .filter(Proposal.status == ProposalStatus.PENDING.value)
+        .order_by(Proposal.created_at.asc())
+        .first()
+    )
+    if not proposal:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay propuestas pendientes para revisar.",
+        )
+
+    logger.info("Cola de revisión: propuesta %s (%s)", proposal.id, proposal.proposal_type)
+    return _proposal_to_preview(proposal, db)
+
+
+@router.get("/{proposal_id}/preview", response_model=ProposalPreviewResponse)
+def preview_proposal(proposal_id: int, db: Session = Depends(get_db)):
+    """
+    Previsualiza una propuesta con HTML inline (como se vería en WordPress)
+    para que el editor confirme aprobar o rechazar con comentario.
+    """
+    proposal = db.get(Proposal, proposal_id)
+    if not proposal:
+        raise HTTPException(status_code=404, detail=f"No existe propuesta con id {proposal_id}.")
+
+    logger.info("Preview propuesta %s tipo=%s", proposal_id, proposal.proposal_type)
+    return _proposal_to_preview(proposal, db)
 
 
 @router.get("", response_model=ProposalListResponse)

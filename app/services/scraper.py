@@ -87,6 +87,7 @@ class ScrapeData:
     word_count: int = 0
     internal_links_count: int = 0
     images_without_alt: int = 0
+    total_images: int = 0          # total de <img> en la página
     scrape_warning: str | None = None
 
     def h2_list_as_json(self) -> str:
@@ -191,6 +192,7 @@ def scrape(url: str) -> ScrapeData:
     has_structured_data, has_faq_schema = _extract_structured_data(soup)
 
     images = soup.find_all("img")
+    total_images = len(images)
     images_without_alt = sum(1 for img in images if not img.get("alt", "").strip())
 
     domain = urlparse(url).netloc
@@ -234,5 +236,6 @@ def scrape(url: str) -> ScrapeData:
         word_count=word_count,
         internal_links_count=internal_links_count,
         images_without_alt=images_without_alt,
+        total_images=total_images,
         scrape_warning=scrape_warning,
     )

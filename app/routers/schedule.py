@@ -134,27 +134,47 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     logger.info("Schedule eliminado id=%s", schedule_id)
 
 
-@router.post("/{schedule_id}/run-now", response_model=dict)
+@router.post("/{schedule_id}/run-now", status_code=202)
 def run_now(schedule_id: int, db: Session = Depends(get_db)):
     """
-    Ejecuta el ciclo inmediatamente sin esperar al próximo tick.
-    Útil para probar el schedule o forzar una actualización.
+    Dispara el ciclo en background y devuelve 202 inmediatamente.
+    Usa GET /agent/trigger/status o GET /proposals para ver los resultados.
     """
+    import threading
+    from datetime import datetime
+    from app.agents.orchestrator import run_full_cycle
+    from app.database import SessionLocal
+
     config = db.get(ScheduleConfig, schedule_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"No existe schedule con id {schedule_id}.")
 
-    from app.agents.orchestrator import run_full_cycle
-    try:
-        result = run_full_cycle(config.url, db)
-        config.last_run_at = __import__('datetime').datetime.now()
-        config.last_run_status = "success"
-        config.last_run_error = None
-        db.commit()
-        return {
-            "message": "Ciclo ejecutado exitosamente.",
-            "analysis_id": result.analysis_id,
-            "proposals_count": result.proposals_count,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error en ejecución: {exc}")
+    url = config.url
+
+    def _run():
+        _db = SessionLocal()
+        try:
+            run_full_cycle(url, _db)
+            cfg = _db.get(ScheduleConfig, schedule_id)
+            if cfg:
+                cfg.last_run_at = datetime.now()
+                cfg.last_run_status = "success"
+                cfg.last_run_error = None
+                _db.commit()
+        except Exception as exc:
+            logger.error("run-now falló schedule_id=%s: %s", schedule_id, exc)
+            try:
+                cfg = _db.get(ScheduleConfig, schedule_id)
+                if cfg:
+                    cfg.last_run_at = datetime.now()
+                    cfg.last_run_status = "error"
+                    cfg.last_run_error = str(exc)[:500]
+                    _db.commit()
+            except Exception:
+                pass
+        finally:
+            _db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+    logger.info("run-now iniciado en background schedule_id=%s url=%s", schedule_id, url)
+    return {"status": "started", "message": f"Ciclo iniciado para {url}. Refresca /proposals en ~60 segundos."}

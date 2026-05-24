@@ -32,18 +32,17 @@ def agent_run_full_cycle(body: RunFullCycleRequest, db: Session = Depends(get_db
 
 
 @router.post("/trigger", status_code=202)
-def agent_trigger(body: RunSiteCycleRequest | None = None):
+def agent_trigger(body: RunFullCycleRequest):
     """
-    Dispara el ciclo completo en background y devuelve 202 inmediatamente.
-    El frontend hace polling a GET /agent/trigger/status para saber cuándo terminó.
+    Audita UNA sola URL en background y devuelve 202 inmediatamente.
+    Polling: GET /agent/trigger/status
     """
     global _cycle_status
 
     if _cycle_status["running"]:
         return {"status": "running", "message": "Ya hay un ciclo en ejecución."}
 
-    payload = body or RunSiteCycleRequest()
-    wp_url = str(payload.wordpress_url) if payload.wordpress_url else None
+    url = str(body.url)
 
     def _run():
         global _cycle_status
@@ -51,27 +50,21 @@ def agent_trigger(body: RunSiteCycleRequest | None = None):
         _cycle_status["last_error"] = None
         db = SessionLocal()
         try:
-            result = run_site_cycle(
-                db,
-                wordpress_url=wp_url,
-                include_posts=payload.include_posts,
-                status=payload.status,
-                skip_existing=payload.skip_existing,
-            )
+            result = run_full_cycle(url, db)
             _cycle_status["last_result"] = {
-                "analyzed": result["analyzed"],
-                "total_proposals_created": result["total_proposals_created"],
+                "analyzed": 1,
+                "total_proposals_created": result.proposals_count,
             }
-            logger.info("[Trigger] Ciclo completado: %s propuestas", result["total_proposals_created"])
+            logger.info("[Trigger] Ciclo completado url=%s propuestas=%s", url, result.proposals_count)
         except Exception as exc:
             _cycle_status["last_error"] = str(exc)
-            logger.error("[Trigger] Ciclo falló: %s", exc)
+            logger.error("[Trigger] Ciclo falló url=%s: %s", url, exc)
         finally:
             _cycle_status["running"] = False
             db.close()
 
     threading.Thread(target=_run, daemon=True).start()
-    return {"status": "started", "message": "Ciclo iniciado en segundo plano. Haz polling a /agent/trigger/status"}
+    return {"status": "started", "message": f"Ciclo iniciado para {url}. Polling a /agent/trigger/status"}
 
 
 @router.get("/trigger/status")

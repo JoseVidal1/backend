@@ -240,7 +240,7 @@ def generate_proposals(
     if not scrape:
         raise HTTPException(
             status_code=400,
-            detail="El análisis no tiene datos de scrape. Ejecuta /analyze primero.",
+            detail="El análisis no tiene datos de scrape. Ejecuta run-full-cycle o run-site-cycle primero.",
         )
 
     probe_rows = (

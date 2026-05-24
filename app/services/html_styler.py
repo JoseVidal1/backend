@@ -1,58 +1,101 @@
-"""Estilos inline Serfinanza para contenido publicado en WordPress."""
+"""
+Estilos inline Serfinanza para contenido publicado en WordPress.
+
+Paleta extraída directamente de bancoserfinanza.com (tema Astra):
+  --ast-global-color-0 : #0170B9  → azul principal
+  --ast-global-color-3 : #4B4F58  → texto cuerpo
+  Font: 'Noto Sans', sans-serif
+  H1: 40px / H2: 32px / H3: 26px
+  Body: 18px / Container max-width: 1240px
+"""
 
 from bs4 import BeautifulSoup
 
-# Paleta corporativa bancaria Serfinanza
+# ── Tokens de marca ──────────────────────────────────────────────────────────
+_BLUE     = "#0170B9"   # color corporativo principal
+_BLUE_DK  = "#015a94"   # hover / bordes (10 % más oscuro)
+_BLUE_LT  = "#e6f2fa"   # fondos suaves
+_TEXT     = "#4B4F58"   # color de cuerpo (--ast-global-color-3)
+_TEXT_LT  = "#6b7280"   # texto secundario
+_FONT     = "'Noto Sans', sans-serif"
+
+# ── Estilos por etiqueta ─────────────────────────────────────────────────────
 _TAG_STYLES: dict[str, str] = {
     "h1": (
-        "font-family: 'Segoe UI', Georgia, serif; color: #003366; "
-        "font-size: 28px; font-weight: 700; margin: 24px 0 16px; line-height: 1.3;"
+        f"font-family: {_FONT}; color: {_BLUE}; "
+        "font-size: 40px; font-weight: 700; "
+        "margin: 28px 0 16px; line-height: 1.2;"
     ),
     "h2": (
-        "font-family: 'Segoe UI', Georgia, serif; color: #004080; "
-        "font-size: 22px; font-weight: 600; margin: 20px 0 12px; "
-        "border-bottom: 2px solid #0066cc; padding-bottom: 6px; line-height: 1.35;"
+        f"font-family: {_FONT}; color: {_BLUE}; "
+        "font-size: 32px; font-weight: 600; "
+        f"margin: 24px 0 12px; border-bottom: 2px solid {_BLUE}; "
+        "padding-bottom: 8px; line-height: 1.25;"
     ),
     "h3": (
-        "font-family: 'Segoe UI', Georgia, serif; color: #005599; "
-        "font-size: 18px; font-weight: 600; margin: 16px 0 8px; line-height: 1.4;"
+        f"font-family: {_FONT}; color: {_BLUE_DK}; "
+        "font-size: 26px; font-weight: 600; "
+        "margin: 20px 0 10px; line-height: 1.3;"
+    ),
+    "h4": (
+        f"font-family: {_FONT}; color: {_TEXT}; "
+        "font-size: 20px; font-weight: 600; "
+        "margin: 16px 0 8px; line-height: 1.35;"
     ),
     "p": (
-        "font-family: 'Segoe UI', Arial, sans-serif; color: #333333; "
-        "font-size: 16px; line-height: 1.7; margin: 0 0 14px;"
+        f"font-family: {_FONT}; color: {_TEXT}; "
+        "font-size: 18px; line-height: 1.7; margin: 0 0 16px;"
     ),
     "ul": (
-        "font-family: 'Segoe UI', Arial, sans-serif; color: #333333; "
-        "font-size: 16px; line-height: 1.7; margin: 0 0 16px 24px; padding: 0;"
+        f"font-family: {_FONT}; color: {_TEXT}; "
+        "font-size: 18px; line-height: 1.7; "
+        "margin: 0 0 18px 28px; padding: 0;"
     ),
     "ol": (
-        "font-family: 'Segoe UI', Arial, sans-serif; color: #333333; "
-        "font-size: 16px; line-height: 1.7; margin: 0 0 16px 24px; padding: 0;"
+        f"font-family: {_FONT}; color: {_TEXT}; "
+        "font-size: 18px; line-height: 1.7; "
+        "margin: 0 0 18px 28px; padding: 0;"
     ),
-    "li": "margin-bottom: 6px; line-height: 1.6;",
-    "strong": "color: #003366; font-weight: 700;",
-    "em": "color: #555555; font-style: italic;",
+    "li": f"color: {_TEXT}; margin-bottom: 8px; line-height: 1.65;",
+    "strong": f"color: {_BLUE_DK}; font-weight: 700;",
+    "em": f"color: {_TEXT_LT}; font-style: italic;",
     "blockquote": (
-        "border-left: 4px solid #0066cc; margin: 16px 0; padding: 12px 20px; "
-        "background-color: #f0f6fc; color: #004080; font-style: italic;"
+        f"border-left: 4px solid {_BLUE}; margin: 20px 0; "
+        f"padding: 14px 24px; background-color: {_BLUE_LT}; "
+        f"color: {_TEXT}; font-style: italic; font-size: 18px; "
+        "border-radius: 0 4px 4px 0;"
     ),
-    "a": "color: #0066cc; text-decoration: underline;",
-    "hr": "border: none; border-top: 1px solid #cce0f5; margin: 24px 0;",
+    "a": f"color: {_BLUE}; text-decoration: underline;",
+    "hr": f"border: none; border-top: 1px solid {_BLUE_LT}; margin: 28px 0;",
     "code": (
-        "background-color: #f4f4f4; color: #003366; padding: 2px 6px; "
-        "border-radius: 3px; font-size: 14px;"
+        f"background-color: {_BLUE_LT}; color: {_BLUE_DK}; "
+        "padding: 2px 6px; border-radius: 3px; font-size: 15px;"
+    ),
+    "table": (
+        f"width: 100%; border-collapse: collapse; "
+        f"font-family: {_FONT}; font-size: 16px; margin: 16px 0 24px;"
+    ),
+    "th": (
+        f"background-color: {_BLUE}; color: #ffffff; "
+        "padding: 10px 14px; text-align: left; font-weight: 600;"
+    ),
+    "td": (
+        f"border: 1px solid {_BLUE_LT}; padding: 10px 14px; "
+        f"color: {_TEXT}; vertical-align: top;"
     ),
 }
 
 _WRAPPER_STYLE = (
-    "font-family: 'Segoe UI', Arial, sans-serif; color: #333333; "
-    "max-width: 800px; line-height: 1.7;"
+    f"font-family: {_FONT}; color: {_TEXT}; "
+    "max-width: 1240px; line-height: 1.7; "
+    "background-color: #ffffff; padding: 0;"
 )
 
 _DISCLAIMER_STYLE = (
-    "font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; "
-    "color: #666666; font-style: italic; margin-top: 24px; "
-    "padding: 12px 16px; background-color: #f9f9f9; border-left: 3px solid #0066cc;"
+    f"font-family: {_FONT}; font-size: 14px; "
+    f"color: {_TEXT_LT}; font-style: italic; margin-top: 28px; "
+    f"padding: 14px 18px; background-color: {_BLUE_LT}; "
+    f"border-left: 4px solid {_BLUE}; border-radius: 0 4px 4px 0;"
 )
 
 

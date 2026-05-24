@@ -1,12 +1,14 @@
 from typing import Optional
 
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-from app.schemas.analysis import ScrapeSummary
-from app.schemas.proposal import ProposalSummary
+from app.schemas.analysis import BulkAnalyzeItem, ScrapeSummary
+from app.schemas.proposal import ProposalSummary, RecommendAllResultItem
 
 
 class RunFullCycleRequest(BaseModel):
+    """Una URL: audit + probe + propuestas."""
+
     url: HttpUrl
 
     @field_validator("url")
@@ -27,3 +29,31 @@ class RunFullCycleResponse(BaseModel):
     scrape_summary: Optional[ScrapeSummary] = None
     scrape_warning: Optional[str] = None
     proposals: list[ProposalSummary] = []
+
+
+class RunSiteCycleRequest(BaseModel):
+    """Sitio WordPress completo: auditar todas las páginas + generar propuestas."""
+
+    wordpress_url: Optional[HttpUrl] = Field(
+        default=None,
+        description="URL base del sitio WP. Default: WORDPRESS_URL del .env.",
+    )
+    include_posts: bool = Field(default=True, description="Incluir entradas de blog además de páginas.")
+    status: str = Field(default="publish", description="Estado WP: publish, draft, etc.")
+    skip_existing: bool = Field(
+        default=True,
+        description="Omite análisis que ya tienen propuestas generadas.",
+    )
+
+
+class RunSiteCycleResponse(BaseModel):
+    source: str
+    total_found: int
+    analyzed: int
+    audit_failed: int
+    audit_results: list[BulkAnalyzeItem]
+    processed: int
+    skipped: int
+    recommend_failed: int
+    total_proposals_created: int
+    recommend_results: list[RecommendAllResultItem]

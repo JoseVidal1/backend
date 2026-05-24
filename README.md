@@ -85,62 +85,58 @@ const data = await res.json(); // { status: "ok" }
 |---|---|---|
 | GET | `/health` | Ping |
 
-### AUDITAR
+### Agente (ciclos unificados)
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/analyze` | Scrape + SEO/GEO Score |
+| POST | `/agent/run-full-cycle` | Una URL: audit + probe + propuestas |
+| POST | `/agent/run-site-cycle` | WordPress: audita todas las páginas + propuestas |
+
+### Consultas
+
+| Método | Ruta | Descripción |
+|---|---|---|
 | GET | `/analyses` | Historial paginado |
 | GET | `/analyses/{id}` | Detalle completo |
-| POST | `/probe/run` | LLM probing (¿menciona Serfinanza?) |
 | GET | `/probe/results` | Historial de probes |
 | GET | `/gsc/opportunities` | Oportunidades GSC mock |
 
-### RECOMENDAR
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| POST | `/agent/recommend` | Genera propuestas con Gemini |
-| POST | `/agent/run-full-cycle` | Audit + probe + recommend en uno |
-
-### EDITAR
+### EDITAR / APRENDER
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/proposals` | Lista (`?status=pending`) |
-| GET | `/proposals/{id}` | Detalle |
-| POST | `/proposals/{id}/approve` | Publica vía WordPress mock |
+| GET | `/proposals/review/next` | Cola editor + preview |
+| GET | `/proposals/{id}/preview` | Preview HTML |
+| POST | `/proposals/{id}/approve` | Publica en WordPress |
 | POST | `/proposals/{id}/reject` | Rechaza con motivo |
-
-### APRENDER
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| POST | `/proposals/{id}/measure-impact` | Re-medición mock a 4 semanas |
+| POST | `/proposals/{id}/measure-impact` | Re-medición mock |
 
 ---
 
-## Flujo demo (Swagger o frontend)
+## Flujo demo
 
-### Opción A — Paso a paso
+### Sitio WordPress completo
 
-1. `POST /analyze` → `{ "url": "https://www.bancolombia.com/personas/blog" }`
-2. `POST /probe/run` → `{ "analysis_id": 1, "queries": ["¿qué tarjeta me conviene en Colombia?"] }`
-3. `POST /agent/recommend` → `{ "analysis_id": 1 }` *(1–3 min)*
-4. `GET /proposals?status=pending`
-5. `POST /proposals/1/approve`
-6. `POST /proposals/1/measure-impact`
+```json
+POST /agent/run-site-cycle
+{ "include_posts": true }
+```
 
-### Opción B — Todo en uno *(demo en pitch)*
+### Una URL
 
 ```json
 POST /agent/run-full-cycle
-{
-  "url": "https://www.bancolombia.com/personas/blog"
-}
+{ "url": "https://www.bancolombia.com/personas/blog" }
 ```
 
-Ejecuta audit + 2 probes + propuestas. Tarda **3–5 minutos**.
+Luego: `GET /proposals/review/next` → approve/reject.
+
+---
+
+## Endpoints eliminados (v2.1)
+
+`POST /analyze`, `/analyze/wordpress-pages`, `/agent/recommend`, `/agent/recommend-all`, `/probe/run` — reemplazados por los ciclos unificados. Ver `FRONTEND.md`.
 
 ---
 

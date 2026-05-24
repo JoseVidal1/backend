@@ -3,48 +3,59 @@ import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.agents.orchestrator import run_full_cycle
-from app.agents.recommender import generate_proposals, generate_proposals_for_all
+from app.agents.orchestrator import run_full_cycle, run_site_cycle
 from app.database import get_db
-from app.schemas.agent import RunFullCycleRequest, RunFullCycleResponse
-from app.schemas.proposal import (
-    ProposalSummary,
-    RecommendAllRequest,
-    RecommendAllResponse,
-    RecommendAllResultItem,
-    RecommendRequest,
-    RecommendResponse,
+from app.schemas.agent import (
+    RunFullCycleRequest,
+    RunFullCycleResponse,
+    RunSiteCycleRequest,
+    RunSiteCycleResponse,
 )
+from app.schemas.proposal import ProposalSummary, RecommendAllResultItem
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/agent", tags=["Recomendar"])
+router = APIRouter(prefix="/agent", tags=["Agente"])
 
 
-@router.post("/recommend-all", response_model=RecommendAllResponse)
-def recommend_all(body: RecommendAllRequest | None = None, db: Session = Depends(get_db)):
+@router.post("/run-full-cycle", response_model=RunFullCycleResponse)
+def agent_run_full_cycle(body: RunFullCycleRequest, db: Session = Depends(get_db)):
     """
-    Genera propuestas con Gemini para todos los análisis completados
-    (o solo los analysis_ids indicados). Ideal tras POST /analyze/wordpress-pages.
+    **Una URL:** scrape + SEO/GEO score + LLM probe (2 queries) + propuestas Gemini.
     """
-    payload = body or RecommendAllRequest()
-    logger.info(
-        "POST /agent/recommend-all ids=%s skip_existing=%s",
-        payload.analysis_ids,
-        payload.skip_existing,
-    )
-    raw = generate_proposals_for_all(
+    logger.info("POST /agent/run-full-cycle url=%s", body.url)
+    return run_full_cycle(str(body.url), db)
+
+
+@router.post("/run-site-cycle", response_model=RunSiteCycleResponse)
+def agent_run_site_cycle(body: RunSiteCycleRequest | None = None, db: Session = Depends(get_db)):
+    """
+    **Sitio WordPress completo:** audita todas las páginas/posts vía REST API
+    y genera propuestas para cada una en una sola llamada.
+    """
+    payload = body or RunSiteCycleRequest()
+    wp_url = str(payload.wordpress_url) if payload.wordpress_url else None
+    logger.info("POST /agent/run-site-cycle url=%s", wp_url)
+
+    raw = run_site_cycle(
         db,
-        analysis_ids=payload.analysis_ids,
+        wordpress_url=wp_url,
+        include_posts=payload.include_posts,
+        status=payload.status,
         skip_existing=payload.skip_existing,
     )
-    return RecommendAllResponse(
-        total_analyses=raw["total_analyses"],
+
+    return RunSiteCycleResponse(
+        source=raw["source"],
+        total_found=raw["total_found"],
+        analyzed=raw["analyzed"],
+        audit_failed=raw["audit_failed"],
+        audit_results=raw["audit_results"],
         processed=raw["processed"],
         skipped=raw["skipped"],
-        failed=raw["failed"],
+        recommend_failed=raw["recommend_failed"],
         total_proposals_created=raw["total_proposals_created"],
-        results=[
+        recommend_results=[
             RecommendAllResultItem(
                 analysis_id=item["analysis_id"],
                 url=item["url"],
@@ -53,28 +64,6 @@ def recommend_all(body: RecommendAllRequest | None = None, db: Session = Depends
                 skipped=item["skipped"],
                 error=item["error"],
             )
-            for item in raw["results"]
+            for item in raw["recommend_results"]
         ],
     )
-
-
-@router.post("/recommend", response_model=RecommendResponse)
-def recommend(body: RecommendRequest, db: Session = Depends(get_db)):
-    """Genera propuestas tipadas con Gemini a partir de un análisis."""
-    logger.info("POST /agent/recommend analysis_id=%s", body.analysis_id)
-    proposals = generate_proposals(body.analysis_id, db)
-    return RecommendResponse(
-        analysis_id=body.analysis_id,
-        proposals_created=len(proposals),
-        proposals=[ProposalSummary.model_validate(p) for p in proposals],
-    )
-
-
-@router.post("/run-full-cycle", response_model=RunFullCycleResponse)
-def agent_run_full_cycle(body: RunFullCycleRequest, db: Session = Depends(get_db)):
-    """
-    Ejecuta en cadena: audit → probe (2 queries) → recommend.
-    Ideal para demo end-to-end desde el frontend.
-    """
-    logger.info("POST /agent/run-full-cycle url=%s", body.url)
-    return run_full_cycle(str(body.url), db)

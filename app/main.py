@@ -1,10 +1,11 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import Base, engine, run_sqlite_migrations
+from app.database import Base, SessionLocal, engine, run_sqlite_migrations
 import app.models  # noqa: F401 — registra todos los modelos en Base.metadata
 
 logging.basicConfig(
@@ -13,6 +14,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Ciclo de vida de FastAPI:
+    - Al arrancar: crea tablas, inicia scheduler y restaura jobs activos.
+    - Al apagar: detiene scheduler limpiamente.
+    """
+    from app.services.scheduler import restore_active_schedules, start_scheduler
+
+    Base.metadata.create_all(bind=engine)
+    run_sqlite_migrations()
+    logger.info("Tablas de la base de datos verificadas/creadas.")
+
+    start_scheduler()
+
+    # Restaurar schedules activos que estaban corriendo antes del reinicio
+    db = SessionLocal()
+    try:
+        count = restore_active_schedules(db)
+        if count:
+            logger.info("%s schedule(s) restaurados desde DB.", count)
+    finally:
+        db.close()
+
+    logger.info("GEO Copilot API iniciada correctamente.")
+    yield
+
+    # --- Shutdown ---
+    from app.services.scheduler import stop_scheduler
+    stop_scheduler()
+    logger.info("GEO Copilot API detenida.")
+
+
 app = FastAPI(
     title="GEO Copilot API",
     description=(
@@ -20,12 +55,10 @@ app = FastAPI(
         "para optimización en motores generativos (GEO)."
     ),
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS: permite que el frontend en localhost:3000 llame a esta API.
-# allow_origins: lista de dominios permitidos.
-# allow_methods=["*"]: acepta GET, POST, PUT, DELETE, etc.
-# allow_headers=["*"]: acepta cualquier header (necesario para Content-Type, Authorization).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins(),
@@ -34,26 +67,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Crea las tablas en la DB si no existen todavía.
-# En producción usaríamos Alembic para migraciones, pero para el hackathon esto es suficiente.
-Base.metadata.create_all(bind=engine)
-run_sqlite_migrations()
-logger.info("Tablas de la base de datos verificadas/creadas.")
-
 # --- Routers ---
-from app.routers import agent, analyze, gsc, probe, proposals
+from app.routers import agent, analyze, gsc, probe, proposals, schedule
 
 app.include_router(analyze.router)
 app.include_router(probe.router)
 app.include_router(gsc.router)
 app.include_router(agent.router)
 app.include_router(proposals.router)
+app.include_router(schedule.router)
 
 
 @app.get("/health", tags=["Sistema"])
 def health_check():
     """Verifica que el servidor está corriendo."""
     return {"status": "ok"}
-
-
-logger.info("GEO Copilot API iniciada correctamente.")
